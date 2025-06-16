@@ -619,20 +619,10 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
         const result = _.attempt(() => JSON.parse(event.data));
         if (_.isError(result))
           throw new Error(`Stream response invalid: ${event.data}`);
-        // 检测并过滤批量响应格式
-        if (result.o === "BATCH" && result.p === "response" && Array.isArray(result.v)) {
-          logger.info('检测到批量响应格式，跳过处理');
-          return;
-        }
         // 检测并过滤内容过滤器响应
-        if (result.v && Array.isArray(result.v)) {
-          const hasContentFilter = result.v.some(item => 
-            item.p === "status" && item.v === "CONTENT_FILTER"
-          );
-          if (hasContentFilter) {
-            logger.info('检测到内容过滤器响应，跳过处理');
-            return;
-          }
+        if (result.choices && result.choices[0] && result.choices[0].finish_reason === "content_filter") {
+          logger.info('receiveStream 检测到内容过滤器响应（finish_reason: content_filter），跳过处理');
+          return;
         }
         if (!result.choices || !result.choices[0] || !result.choices[0].delta)
           return;
@@ -721,20 +711,10 @@ function createTransStream(model: string, stream: any, refConvId: string, endCal
       const result = _.attempt(() => JSON.parse(event.data));
       if (_.isError(result))
         throw new Error(`Stream response invalid: ${event.data}`);
-      // 检测并过滤批量响应格式
-      if (result.o === "BATCH" && result.p === "response" && Array.isArray(result.v)) {
-        logger.info('检测到批量响应格式，跳过处理');
-        return;
-      }
       // 检测并过滤内容过滤器响应
-      if (result.v && Array.isArray(result.v)) {
-        const hasContentFilter = result.v.some(item => 
-          item.p === "status" && item.v === "CONTENT_FILTER"
-        );
-        if (hasContentFilter) {
-          logger.info('检测到内容过滤器响应，跳过处理');
-          return;
-        }
+      if (result.choices && result.choices[0] && result.choices[0].finish_reason === "content_filter") {
+        logger.info('createTransStream 检测到内容过滤器响应（finish_reason: content_filter），跳过处理');
+        return;
       }
       if (!result.choices || !result.choices[0] || !result.choices[0].delta)
         return;
