@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   release:
-    types: [created]
+    types: [创建]
   workflow_dispatch:
     inputs:
       tag:
@@ -40,7 +40,7 @@ jobs:
         file: ./Dockerfile
         push: true
         tags: |
-          vinlic/deepseek-free-api:${{ steps.tag_name.outputs.tag }}
-          vinlic/deepseek-free-api:latest
+          ${{ secrets.DOCKERHUB_USERNAME }}/deepseek-free-api:${{ steps.tag_name.outputs.tag }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/deepseek-free-api:latest
         platforms: linux/amd64,linux/arm64
         build-args: TARGETPLATFORM=${{ matrix.platform }}
