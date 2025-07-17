@@ -28,6 +28,8 @@ export default {
             const tokens = chat.tokenSplit(request.headers.authorization);
             // 随机挑选一个token
             const token = _.sample(tokens);
+            // 打印选择的token
+            console.log(`选择的usertoken: ${token}`);
             let { model, conversation_id: convId, messages, stream } = request.body;
             model = model.toLowerCase();
             if (stream) {
