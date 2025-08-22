@@ -298,6 +298,105 @@ Authorization: Bearer [userToken value]
 }
 ```
 
+### MCP工具调用支持
+
+本接口支持MCP（Model Context Protocol）工具调用，允许大模型调用客户端提供的工具来扩展功能。
+
+**工具调用流程：**
+
+1. 客户端在请求中提供可用工具列表
+2. 大模型分析需要使用的工具并返回工具调用
+3. 客户端执行工具并将结果返回
+4. 大模型基于工具结果继续对话
+
+**请求数据（含工具）：**
+```json
+{
+    "model": "deepseek",
+    "messages": [
+        {
+            "role": "user",
+            "content": "北京现在的天气怎么样？"
+        }
+    ],
+    "tools": [
+        {
+            "name": "get_weather",
+            "description": "获取指定城市的当前天气信息",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "城市名称"
+                    }
+                },
+                "required": ["city"]
+            }
+        }
+    ]
+}
+```
+
+**响应数据（含工具调用）：**
+```json
+{
+    "id": "50207e56-747e-4800-9068-c6fd618374ee@2",
+    "model": "deepseek",
+    "object": "chat.completion",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "我来帮您查询北京的天气情况。",
+                "tool_calls": [
+                    {
+                        "id": "call_weather_123",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"city\": \"北京\"}"
+                        }
+                    }
+                ]
+            },
+            "finish_reason": "tool_calls"
+        }
+    ],
+    "created": 1715061432
+}
+```
+
+**工具执行结果请求：**
+```json
+{
+    "model": "deepseek",
+    "messages": [
+        {
+            "role": "user",
+            "content": "北京现在的天气怎么样？"
+        },
+        {
+            "role": "assistant", 
+            "content": "我来帮您查询北京的天气情况。",
+            "tool_calls": [...]
+        },
+        {
+            "role": "tool",
+            "content": "北京当前天气：晴天，气温15°C，风力3级",
+            "tool_call_id": "call_weather_123"
+        }
+    ],
+    "tool_results": [
+        {
+            "tool_call_id": "call_weather_123",
+            "content": "北京当前天气：晴天，气温15°C，风力3级"
+        }
+    ]
+}
+```
+
 ### userToken存活检测
 
 检测userToken是否存活，如果存活live为true，否则为false，请不要频繁（小于10分钟）调用此接口。
