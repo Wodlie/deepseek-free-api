@@ -7,6 +7,7 @@ import EX from "@/api/consts/exceptions.ts";
 import { DeepSeekHash } from "@/lib/challenge.ts";
 import logger from "@/lib/logger.ts";
 import util from "@/lib/util.ts";
+import { hasMCPToolCalls, processMCPMessages, convertMCPMessagesToPrompt, MCPMessage } from "@/lib/mcp.ts";
 
 // 模型名称
 const MODEL_NAME = "deepseek-chat";
@@ -276,7 +277,7 @@ async function createCompletion(
       refConvId = null;
 
     // 消息预处理
-    const prompt = messagesPrepare(messages);
+    const { prompt, hasMCPCalls, toolResults } = await messagesPrepareWithMCP(messages);
 
     // 解析引用对话ID
     const [refSessionId, refParentMsgId] = refConvId?.split('@') || [];
@@ -342,7 +343,7 @@ async function createCompletion(
 
     const streamStartTime = util.timestamp();
     // 接收流为输出文本
-    const answer = await receiveStream(model, result.data, sessionId);
+    const answer = await receiveStreamWithMCP(model, result.data, sessionId, hasMCPCalls, messages);
     // 异步移除会话
     removeConversation(sessionId, refreshToken).catch(err => {
       console.log(err)
@@ -395,7 +396,7 @@ async function createCompletionStream(
       refConvId = null;
 
     // 消息预处理
-    const prompt = messagesPrepare(messages);
+    const { prompt, hasMCPCalls, toolResults } = await messagesPrepareWithMCP(messages);
 
     // 解析引用对话ID
     const [refSessionId, refParentMsgId] = refConvId?.split('@') || [];
@@ -480,7 +481,7 @@ async function createCompletionStream(
     }
     const streamStartTime = util.timestamp();
     // 创建转换流将消息格式转换为gpt兼容格式
-    return await createTransStream(model, result.data, sessionId, () => {
+    return await createTransStreamWithMCP(model, result.data, sessionId, hasMCPCalls, messages, () => {
       logger.success(
         `Stream has completed transfer ${util.timestamp() - streamStartTime}ms`
       );
@@ -507,6 +508,43 @@ async function createCompletionStream(
     }
     throw err;
   });
+}
+
+/**
+ * MCP消息预处理
+ * 
+ * 处理包含MCP工具调用的消息，执行工具并返回处理后的提示符
+ *
+ * @param messages 包含可能的MCP工具调用的消息
+ */
+async function messagesPrepareWithMCP(messages: MCPMessage[]): Promise<{
+  prompt: string;
+  hasMCPCalls: boolean;
+  toolResults: any[];
+}> {
+  // 检查是否包含MCP工具调用
+  if (hasMCPToolCalls(messages)) {
+    logger.info('Detected MCP tool calls, processing...');
+    
+    // 处理MCP消息和工具调用
+    const { processedMessages, toolResults } = await processMCPMessages(messages);
+    
+    // 将处理后的消息转换为提示符
+    const prompt = convertMCPMessagesToPrompt(processedMessages);
+    
+    return {
+      prompt,
+      hasMCPCalls: true,
+      toolResults
+    };
+  } else {
+    // 如果没有MCP工具调用，使用原有的处理逻辑
+    return {
+      prompt: messagesPrepare(messages),
+      hasMCPCalls: false,
+      toolResults: []
+    };
+  }
 }
 
 /**
@@ -582,6 +620,41 @@ function checkResult(result: AxiosResponse, refreshToken: string) {
 }
 
 /**
+ * 从流接收完整的消息内容 (with MCP support)
+ *
+ * @param model 模型名称
+ * @param stream 消息流
+ * @param refConvId 引用对话ID
+ * @param hasMCPCalls 是否包含MCP调用
+ * @param originalMessages 原始消息（用于生成tool_calls）
+ */
+async function receiveStreamWithMCP(
+  model: string, 
+  stream: any, 
+  refConvId: string, 
+  hasMCPCalls: boolean, 
+  originalMessages: MCPMessage[]
+): Promise<any> {
+  const baseResponse = await receiveStream(model, stream, refConvId);
+  
+  // 如果没有MCP调用，直接返回原始响应
+  if (!hasMCPCalls) {
+    return baseResponse;
+  }
+  
+  // 如果有MCP调用，需要检查最后一条助手消息是否包含tool_calls
+  const lastAssistantMessage = [...originalMessages].reverse().find(msg => msg.role === 'assistant');
+  
+  if (lastAssistantMessage && lastAssistantMessage.tool_calls) {
+    // 修改响应以包含tool_calls
+    baseResponse.choices[0].message.tool_calls = lastAssistantMessage.tool_calls;
+    baseResponse.choices[0].finish_reason = 'tool_calls';
+  }
+  
+  return baseResponse;
+}
+
+/**
  * 从流接收完整的消息内容
  *
  * @param model 模型名称
@@ -652,6 +725,85 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
       resolve(finalResponse);
     });
   });
+}
+
+/**
+ * 创建转换流 (with MCP support)
+ *
+ * 将流格式转换为gpt兼容流格式，支持MCP工具调用
+ *
+ * @param model 模型名称
+ * @param stream 消息流
+ * @param refConvId 引用对话ID
+ * @param hasMCPCalls 是否包含MCP调用
+ * @param originalMessages 原始消息
+ * @param endCallback 传输结束回调
+ */
+async function createTransStreamWithMCP(
+  model: string, 
+  stream: any, 
+  refConvId: string, 
+  hasMCPCalls: boolean, 
+  originalMessages: MCPMessage[], 
+  endCallback?: Function
+) {
+  if (!hasMCPCalls) {
+    return createTransStream(model, stream, refConvId, endCallback);
+  }
+  
+  // 对于包含MCP调用的情况，需要特殊处理
+  // 首先检查是否需要发送tool_calls
+  const lastAssistantMessage = [...originalMessages].reverse().find(msg => msg.role === 'assistant');
+  
+  if (lastAssistantMessage && lastAssistantMessage.tool_calls) {
+    // 需要首先发送包含tool_calls的消息
+    const transStream = new PassThrough();
+    
+    const messageId = util.uuid().slice(0, 8);
+    const created = util.unixTimestamp();
+    
+    // 发送包含tool_calls的首个chunk
+    const toolCallChunk = {
+      id: messageId,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        delta: {
+          role: "assistant",
+          content: null,
+          tool_calls: lastAssistantMessage.tool_calls
+        },
+        finish_reason: null
+      }]
+    };
+    
+    transStream.write(`data: ${JSON.stringify(toolCallChunk)}\n\n`);
+    
+    // 发送结束chunk
+    const endChunk = {
+      id: messageId,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        delta: {},
+        finish_reason: "tool_calls"
+      }]
+    };
+    
+    transStream.write(`data: ${JSON.stringify(endChunk)}\n\n`);
+    transStream.write("data: [DONE]\n\n");
+    transStream.end();
+    
+    if (endCallback) endCallback();
+    return transStream;
+  }
+  
+  // 如果没有tool_calls，使用普通的流处理
+  return createTransStream(model, stream, refConvId, endCallback);
 }
 
 /**
