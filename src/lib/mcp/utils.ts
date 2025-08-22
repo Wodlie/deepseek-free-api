@@ -173,7 +173,9 @@ Please continue the conversation considering these tool results.
  * Remove tool call tags from content for clean display
  */
 export function cleanMCPContent(content: string): string {
-  return content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+  const cleaned = content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
+  
+  return cleaned; // 移除 .trim() 以保留开头和结尾的换行符
 }
 
 /**

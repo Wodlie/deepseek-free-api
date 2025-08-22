@@ -592,7 +592,7 @@ function messagesPrepare(messages: any[], mcpTools?: MCPTool[], mcpToolResults?:
   }
 
   // 添加标签并连接结果
-  return mergedBlocks
+  const finalPrompt = mergedBlocks
     .map((block, index) => {
       if (block.role === "assistant") {
         return `<｜Assistant｜>${block.text}<｜end of sentence｜>`;
@@ -604,8 +604,10 @@ function messagesPrepare(messages: any[], mcpTools?: MCPTool[], mcpToolResults?:
 
       return block.text;
     })
-    .join('')
+    .join('\n')
     .replace(/\!\[.+\]\(.+\)/g, "");
+    
+  return finalPrompt;
 }
 
 /**
@@ -687,8 +689,8 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
           index: 0,
           message: {
             role: "assistant",
-            content: cleanContent.trim(),
-            reasoning_content: accumulatedThinkingContent.trim(),
+            content: cleanContent, // 移除 .trim() 以保留换行符
+            reasoning_content: accumulatedThinkingContent, // 移除 .trim() 以保留换行符
             ...(toolCalls.length > 0 && { tool_calls: toolCalls })
           },
           finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
