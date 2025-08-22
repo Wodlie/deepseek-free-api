@@ -19,6 +19,8 @@ export default {
             request
                 .validate('body.conversation_id', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.messages', _.isArray)
+                .validate('body.tools', v => _.isUndefined(v) || _.isArray(v))
+                .validate('body.tool_results', v => _.isUndefined(v) || _.isArray(v))
                 .validate('headers.authorization', _.isString)
 
             // 如果环境变量没有token则读取请求中的
