@@ -4,6 +4,7 @@ import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
 import chat from '@/api/controllers/chat.ts';
 import process from "process";
+import { MCPTool, MCPToolResult } from '@/lib/mcp/types.ts';
 
 
 const DEEP_SEEK_CHAT_AUTHORIZATION = process.env.DEEP_SEEK_CHAT_AUTHORIZATION;
@@ -30,16 +31,26 @@ export default {
             const token = _.sample(tokens);
             // 打印选择的token
             console.log(`选择的usertoken: ${token}`);
-            let { model, conversation_id: convId, messages, stream } = request.body;
+            
+            let { 
+                model, 
+                conversation_id: convId, 
+                messages, 
+                stream,
+                tools: mcpTools,
+                tool_results: mcpToolResults 
+            } = request.body;
+            
             model = model.toLowerCase();
+            
             if (stream) {
-                const stream = await chat.createCompletionStream(model, messages, token, convId);
+                const stream = await chat.createCompletionStream(model, messages, token, convId, mcpTools, mcpToolResults);
                 return new Response(stream, {
                     type: "text/event-stream"
                 });
             }
             else
-                return await chat.createCompletion(model, messages, token, convId);
+                return await chat.createCompletion(model, messages, token, convId, mcpTools, mcpToolResults);
         }
 
     }

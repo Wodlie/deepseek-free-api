@@ -7,6 +7,14 @@ import EX from "@/api/consts/exceptions.ts";
 import { DeepSeekHash } from "@/lib/challenge.ts";
 import logger from "@/lib/logger.ts";
 import util from "@/lib/util.ts";
+import { MCPTool, MCPToolResult, MCPToolCall } from "@/lib/mcp/types.ts";
+import { 
+  generateMCPContext, 
+  parseMCPToolCalls, 
+  generateMCPToolResultsContext,
+  cleanMCPContent,
+  hasMCPToolCalls 
+} from "@/lib/mcp/utils.ts";
 
 // 模型名称
 const MODEL_NAME = "deepseek-chat";
@@ -259,6 +267,8 @@ async function removeConversation(
  * @param messages 参考gpt系列消息格式，多轮对话请完整提供上下文
  * @param refreshToken 用于刷新access_token的refresh_token
  * @param refConvId 引用对话ID
+ * @param mcpTools MCP工具列表
+ * @param mcpToolResults MCP工具执行结果
  * @param retryCount 重试次数
  */
 async function createCompletion(
@@ -266,6 +276,8 @@ async function createCompletion(
   messages: any[],
   refreshToken: string,
   refConvId?: string,
+  mcpTools?: MCPTool[],
+  mcpToolResults?: MCPToolResult[],
   retryCount = 0
 ) {
   return (async () => {
@@ -276,7 +288,7 @@ async function createCompletion(
       refConvId = null;
 
     // 消息预处理
-    const prompt = messagesPrepare(messages);
+    const prompt = messagesPrepare(messages, mcpTools, mcpToolResults);
 
     // 解析引用对话ID
     const [refSessionId, refParentMsgId] = refConvId?.split('@') || [];
@@ -363,6 +375,8 @@ async function createCompletion(
           messages,
           refreshToken,
           refConvId,
+          mcpTools,
+          mcpToolResults,
           retryCount + 1
         );
       })();
@@ -378,6 +392,8 @@ async function createCompletion(
  * @param messages 参考gpt系列消息格式，多轮对话请完整提供上下文
  * @param refreshToken 用于刷新access_token的refresh_token
  * @param refConvId 引用对话ID
+ * @param mcpTools MCP工具列表
+ * @param mcpToolResults MCP工具执行结果
  * @param retryCount 重试次数
  */
 async function createCompletionStream(
@@ -385,6 +401,8 @@ async function createCompletionStream(
   messages: any[],
   refreshToken: string,
   refConvId?: string,
+  mcpTools?: MCPTool[],
+  mcpToolResults?: MCPToolResult[],
   retryCount = 0
 ) {
   return (async () => {
@@ -395,7 +413,7 @@ async function createCompletionStream(
       refConvId = null;
 
     // 消息预处理
-    const prompt = messagesPrepare(messages);
+    const prompt = messagesPrepare(messages, mcpTools, mcpToolResults);
 
     // 解析引用对话ID
     const [refSessionId, refParentMsgId] = refConvId?.split('@') || [];
@@ -501,6 +519,8 @@ async function createCompletionStream(
           messages,
           refreshToken,
           refConvId,
+          mcpTools,
+          mcpToolResults,
           retryCount + 1
         );
       })();
@@ -516,7 +536,7 @@ async function createCompletionStream(
  *
  * @param messages 参考gpt系列消息格式，多轮对话请完整提供上下文
  */
-function messagesPrepare(messages: any[]): string {
+function messagesPrepare(messages: any[], mcpTools?: MCPTool[], mcpToolResults?: MCPToolResult[]): string {
   // 处理消息内容
   const processedMessages = messages.map(message => {
     let text: string;
@@ -548,6 +568,28 @@ function messagesPrepare(messages: any[]): string {
     }
   }
   mergedBlocks.push(currentBlock);
+
+  // 注入MCP工具上下文
+  if (mcpTools && mcpTools.length > 0) {
+    const mcpContext = generateMCPContext(mcpTools);
+    // 在第一个用户消息前添加MCP工具上下文
+    if (mergedBlocks.length > 0 && (mergedBlocks[0].role === 'user' || mergedBlocks[0].role === 'system')) {
+      mergedBlocks[0].text = mcpContext + mergedBlocks[0].text;
+    }
+  }
+
+  // 注入MCP工具执行结果
+  if (mcpToolResults && mcpToolResults.length > 0) {
+    const resultsContext = generateMCPToolResultsContext(mcpToolResults);
+    // 在最后一个用户消息后添加工具执行结果
+    const lastUserIndex = mergedBlocks.map((block, index) => ({ block, index }))
+      .filter(({block}) => block.role === 'user')
+      .pop()?.index;
+    
+    if (lastUserIndex !== undefined) {
+      mergedBlocks[lastUserIndex].text += resultsContext;
+    }
+  }
 
   // 添加标签并连接结果
   return mergedBlocks
@@ -632,6 +674,11 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
     stream.once("error", (err) => reject(err));
     stream.once("close", () => {
       logger.info(`[NON-STREAM] Stream closed. Accumulated content length: ${accumulatedContent.length}`);
+      
+      // Check for MCP tool calls in the response
+      const toolCalls = parseMCPToolCalls(accumulatedContent);
+      const cleanContent = cleanMCPContent(accumulatedContent);
+      
       const finalResponse = {
         id: `${refConvId}@${messageId}`,
         model,
@@ -640,10 +687,11 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
           index: 0,
           message: {
             role: "assistant",
-            content: accumulatedContent.trim(),
+            content: cleanContent.trim(),
             reasoning_content: accumulatedThinkingContent.trim(),
+            ...(toolCalls.length > 0 && { tool_calls: toolCalls })
           },
-          finish_reason: "stop",
+          finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
         }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }, // Mocked
         created,
@@ -678,6 +726,10 @@ async function createTransStream(model: string, stream: any, refConvId: string, 
   let currentPath = '';
   let searchResults: any[] = [];
   let thinkingStarted = false;
+  
+  // Accumulate content for MCP tool call detection
+  let accumulatedContent = '';
+  let accumulatedThinkingContent = '';
 
   const parser = createParser((event) => {
     try {
@@ -699,7 +751,17 @@ async function createTransStream(model: string, stream: any, refConvId: string, 
             transStream.write(`data: ${JSON.stringify({ id: `${refConvId}@${messageId}`, model, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: citationContent }, finish_reason: null }], created })}\n\n`);
           }
         }
-        transStream.write(`data: ${JSON.stringify({ id: `${refConvId}@${messageId}`, model, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], created })}\n\n`);
+        
+        // Check for MCP tool calls
+        const toolCalls = parseMCPToolCalls(accumulatedContent);
+        const finishReason = toolCalls.length > 0 ? "tool_calls" : "stop";
+        
+        // Send tool calls if any exist
+        if (toolCalls.length > 0) {
+          transStream.write(`data: ${JSON.stringify({ id: `${refConvId}@${messageId}`, model, object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: toolCalls }, finish_reason: null }], created })}\n\n`);
+        }
+        
+        transStream.write(`data: ${JSON.stringify({ id: `${refConvId}@${messageId}`, model, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: finishReason }], created })}\n\n`);
         !transStream.closed && transStream.end("data: [DONE]\n\n");
         endCallback && endCallback();
         return;
@@ -734,15 +796,27 @@ async function createTransStream(model: string, stream: any, refConvId: string, 
       }
 
       if (typeof chunk.v === 'string') {
+        // Accumulate content for tool call detection
+        if (currentPath === 'thinking') {
+          accumulatedThinkingContent += chunk.v;
+        } else if (currentPath === 'content') {
+          accumulatedContent += chunk.v;
+        } else {
+          accumulatedContent += chunk.v;
+        }
+        
         const delta: { role?: string, content?: string, reasoning_content?: string } = {};
         if (isFirstChunk) {
           delta.role = "assistant";
           isFirstChunk = false;
         }
 
-        const content = isSearchSilentModel
+        let content = isSearchSilentModel
           ? chunk.v.replace(/\[citation:(\d+)\]/g, '')
           : chunk.v.replace(/\[citation:(\d+)\]/g, '[$1]');
+          
+        // Clean MCP tool call tags from streamed content 
+        content = cleanMCPContent(content);
 
         if (currentPath === 'thinking') {
           if (isSilentModel) return;
@@ -767,7 +841,10 @@ async function createTransStream(model: string, stream: any, refConvId: string, 
           delta.content = content;
         }
         
-        transStream.write(`data: ${JSON.stringify({ id: `${refConvId}@${messageId}`, model, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }], created })}\n\n`);
+        // Only stream if there's actual content after cleaning
+        if (delta.content || delta.reasoning_content) {
+          transStream.write(`data: ${JSON.stringify({ id: `${refConvId}@${messageId}`, model, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }], created })}\n\n`);
+        }
       }
     } catch (err) {
       logger.error(`[STREAM] Error processing chunk: ${err}`);
