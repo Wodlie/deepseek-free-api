@@ -4,7 +4,8 @@ import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
 import chat from '@/api/controllers/chat.ts';
 import process from "process";
-import { MCPTool, MCPToolResult } from '@/lib/mcp/types.ts';
+import { MCPTool, MCPToolResult, ToolInput } from '@/lib/mcp/types.ts';
+import { normalizeTools } from '@/lib/mcp/utils.ts';
 
 
 const DEEP_SEEK_CHAT_AUTHORIZATION = process.env.DEEP_SEEK_CHAT_AUTHORIZATION;
@@ -39,11 +40,14 @@ export default {
                 conversation_id: convId, 
                 messages, 
                 stream,
-                tools: mcpTools,
+                tools: rawTools,
                 tool_results: mcpToolResults 
             } = request.body;
             
             model = model.toLowerCase();
+            
+            // Normalize tools to MCP format (supports both OpenAI and MCP formats)
+            const mcpTools: MCPTool[] = rawTools ? normalizeTools(rawTools) : undefined;
             
             if (stream) {
                 const stream = await chat.createCompletionStream(model, messages, token, convId, mcpTools, mcpToolResults);

@@ -1,5 +1,76 @@
-import { MCPTool, MCPToolCall, MCPToolResult, MCPContext } from './types.ts';
+import { MCPTool, MCPToolCall, MCPToolResult, MCPContext, ToolInput, OpenAIFunction } from './types.ts';
 import logger from '@/lib/logger.ts';
+
+/**
+ * Check if a tool is in OpenAI function format
+ */
+export function isOpenAIFunction(tool: any): tool is OpenAIFunction {
+  return tool &&
+    tool.type === 'function' &&
+    tool.function &&
+    typeof tool.function.name === 'string' &&
+    typeof tool.function.description === 'string' &&
+    tool.function.parameters &&
+    typeof tool.function.parameters === 'object';
+}
+
+/**
+ * Check if a tool is in MCP format
+ */
+export function isMCPTool(tool: any): tool is MCPTool {
+  return tool &&
+    typeof tool.name === 'string' &&
+    typeof tool.description === 'string' &&
+    tool.inputSchema &&
+    typeof tool.inputSchema === 'object';
+}
+
+/**
+ * Convert OpenAI function format to MCP tool format
+ */
+export function convertOpenAIToMCP(openAIFunction: OpenAIFunction): MCPTool {
+  return {
+    name: openAIFunction.function.name,
+    description: openAIFunction.function.description,
+    inputSchema: openAIFunction.function.parameters
+  };
+}
+
+/**
+ * Normalize tools array to MCP format, handling both OpenAI and MCP formats
+ */
+export function normalizeTools(tools: ToolInput[]): MCPTool[] {
+  if (!tools || tools.length === 0) return [];
+  
+  return tools.map(tool => {
+    try {
+      if (isOpenAIFunction(tool)) {
+        logger.info(`Converting OpenAI function to MCP: ${tool.function.name}`);
+        return convertOpenAIToMCP(tool);
+      } else if (isMCPTool(tool)) {
+        return tool;
+      } else {
+        // Fallback: try to extract what we can from unknown format
+        logger.warn(`Unknown tool format, attempting fallback conversion:`, tool);
+        const anyTool = tool as any; // Type assertion for unknown format
+        const fallbackTool: MCPTool = {
+          name: anyTool.name || anyTool.function?.name || 'unknown_tool',
+          description: anyTool.description || anyTool.function?.description || 'No description provided',
+          inputSchema: anyTool.inputSchema || anyTool.function?.parameters || { type: 'object', properties: {} }
+        };
+        return fallbackTool;
+      }
+    } catch (error) {
+      logger.error(`Failed to normalize tool:`, tool, error);
+      // Return a safe fallback
+      return {
+        name: 'invalid_tool',
+        description: 'Invalid tool format',
+        inputSchema: { type: 'object', properties: {} }
+      };
+    }
+  });
+}
 
 /**
  * Generate MCP tools context for injection into prompts

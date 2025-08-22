@@ -12,6 +12,27 @@ export interface MCPTool {
   };
 }
 
+/**
+ * OpenAI Function Calling format
+ */
+export interface OpenAIFunction {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: string;
+      properties: Record<string, any>;
+      required?: string[];
+    };
+  };
+}
+
+/**
+ * Union type for tools that supports both MCP and OpenAI formats
+ */
+export type ToolInput = MCPTool | OpenAIFunction;
+
 export interface MCPToolCall {
   id: string;
   type: "function";
