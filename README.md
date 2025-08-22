@@ -236,9 +236,11 @@ pm2 stop deepseek-free-api
 
 目前支持与openai兼容的 `/v1/chat/completions` 接口，可自行使用与openai或其他兼容的客户端接入接口，或者使用 [dify](https://dify.ai/) 等线上服务接入使用。
 
+**✨ 新功能：现已支持MCP (Model Context Protocol) 工具调用！**
+
 ### 对话补全
 
-对话补全接口，与openai的 [chat-completions-api](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) 兼容。
+对话补全接口，与openai的 [chat-completions-api](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) 兼容，现已增加MCP工具调用支持。
 
 **POST /v1/chat/completions**
 
@@ -315,6 +317,120 @@ Authorization: Bearer [userToken value]
 ```json
 {
     "live": true
+}
+```
+
+### MCP (Model Context Protocol) 工具调用
+
+本API现已支持MCP工具调用功能，可以在对话中调用外部工具并获取结果。
+
+#### 支持的工具
+
+1. **天气查询** (`get_weather`)
+   - 参数：`location` (字符串) - 城市名称
+   - 功能：获取指定城市的天气信息
+
+2. **网络搜索** (`search_web`)
+   - 参数：`query` (字符串) - 搜索关键词
+   - 功能：执行网络搜索并返回结果
+
+3. **数学计算** (`calculate`)
+   - 参数：`expression` (字符串) - 数学表达式
+   - 功能：计算数学表达式并返回结果
+
+#### 使用示例
+
+请求数据（包含工具调用）：
+```json
+{
+    "model": "deepseek",
+    "messages": [
+        {
+            "role": "user",
+            "content": "北京的天气怎么样？"
+        },
+        {
+            "role": "assistant",
+            "content": "我来帮您查询北京的天气信息。",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"location\": \"北京\"}"
+                    }
+                }
+            ]
+        }
+    ],
+    "stream": false
+}
+```
+
+响应数据（包含工具调用）：
+```json
+{
+    "id": "session_id@message_id",
+    "model": "deepseek",
+    "object": "chat.completion",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "我来帮您查询北京的天气信息。",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"location\": \"北京\"}"
+                        }
+                    }
+                ]
+            },
+            "finish_reason": "tool_calls"
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "total_tokens": 2
+    },
+    "created": 1715061432
+}
+```
+
+#### MCP测试接口
+
+**POST /v1/mcp/test**
+
+用于测试MCP功能的专用接口。
+
+请求数据：
+```json
+{
+    "messages": [
+        {
+            "role": "user",
+            "content": "测试消息"
+        }
+    ]
+}
+```
+
+响应数据：
+```json
+{
+    "success": true,
+    "data": {
+        "hasMCPCalls": false,
+        "originalMessagesCount": 1,
+        "processedMessages": [],
+        "toolResults": []
+    }
 }
 ```
 

@@ -236,9 +236,11 @@ ChatGPT Web developed by [时光@](https://github.com/SuYxh) [https://github.com
 
 Currently supports the `/v1/chat/completions` interface compatible with openai. You can use openai or other compatible clients to access the interface, or use online services like [dify](https://dify.ai/).
 
+**✨ New Feature: Now supports MCP (Model Context Protocol) tool calling!**
+
 ### Chat Completion
 
-Chat completion interface, compatible with openai's [chat-completions-api](https://platform.openai.com/docs/guides/text-generation/chat-completions-api).
+Chat completion interface, compatible with openai's [chat-completions-api](https://platform.openai.com/docs/guides/text-generation/chat-completions-api), now with added MCP tool calling support.
 
 **POST /v1/chat/completions**
 
@@ -315,6 +317,120 @@ Response data:
 ```json
 {
     "live": true
+}
+```
+
+### MCP (Model Context Protocol) Tool Calling
+
+This API now supports MCP tool calling functionality, allowing you to call external tools during conversations and get results.
+
+#### Supported Tools
+
+1. **Weather Query** (`get_weather`)
+   - Parameter: `location` (string) - City name
+   - Function: Get weather information for the specified city
+
+2. **Web Search** (`search_web`)
+   - Parameter: `query` (string) - Search keywords
+   - Function: Perform web search and return results
+
+3. **Mathematical Calculation** (`calculate`)
+   - Parameter: `expression` (string) - Mathematical expression
+   - Function: Calculate mathematical expressions and return results
+
+#### Usage Example
+
+Request data (with tool call):
+```json
+{
+    "model": "deepseek",
+    "messages": [
+        {
+            "role": "user",
+            "content": "What's the weather like in Beijing?"
+        },
+        {
+            "role": "assistant",
+            "content": "I'll help you check the weather in Beijing.",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"location\": \"Beijing\"}"
+                    }
+                }
+            ]
+        }
+    ],
+    "stream": false
+}
+```
+
+Response data (with tool call):
+```json
+{
+    "id": "session_id@message_id",
+    "model": "deepseek",
+    "object": "chat.completion",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "I'll help you check the weather in Beijing.",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"location\": \"Beijing\"}"
+                        }
+                    }
+                ]
+            },
+            "finish_reason": "tool_calls"
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "total_tokens": 2
+    },
+    "created": 1715061432
+}
+```
+
+#### MCP Test Interface
+
+**POST /v1/mcp/test**
+
+Dedicated interface for testing MCP functionality.
+
+Request data:
+```json
+{
+    "messages": [
+        {
+            "role": "user",
+            "content": "Test message"
+        }
+    ]
+}
+```
+
+Response data:
+```json
+{
+    "success": true,
+    "data": {
+        "hasMCPCalls": false,
+        "originalMessagesCount": 1,
+        "processedMessages": [],
+        "toolResults": []
+    }
 }
 ```
 
